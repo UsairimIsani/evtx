@@ -31,6 +31,94 @@ mod xml_output;
 pub type ChunkOffset = u32;
 pub type FileOffset = u64;
 
+use crate::binxml::name::BinXmlName;
+use crate::binxml::value_variant::BinXmlValue;
+use crate::model::xml::{XmlAttribute, XmlElement};
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::Reader;
+use std::borrow::Cow;
+
+fn bytes_to_string(bytes: &[u8]) -> String {
+    String::from_utf8(bytes.to_vec()).expect("UTF8 Input")
+}
+
+fn dummy_event() -> XmlElement<'static> {
+    XmlElement {
+        name: Cow::Owned(BinXmlName::from_str("Dummy")),
+        attributes: vec![],
+    }
+}
+
+fn event_to_element(event: BytesStart) -> XmlElement {
+    let mut attrs = vec![];
+
+    for attr in event.attributes() {
+        let attr = attr.expect("Failed to read attribute.");
+        attrs.push(XmlAttribute {
+            name: Cow::Owned(BinXmlName::from_string(bytes_to_string(attr.key))),
+            // We have to compromise here and assume all values are strings.
+            value: Cow::Owned(BinXmlValue::StringType(bytes_to_string(&attr.value))),
+        });
+    }
+
+    XmlElement {
+        name: Cow::Owned(BinXmlName::from_string(bytes_to_string(event.name()))),
+        attributes: attrs,
+    }
+}
+pub fn xml_to_json(xml: &str) -> String {
+    let settings = ParserSettings::new()
+        .num_threads(1)
+        .separate_json_attributes(true);
+
+    let mut reader = Reader::from_str(xml);
+    reader.trim_text(true);
+
+    let mut output = JsonOutput::new(&settings);
+    output.visit_start_of_stream().expect("Start of stream");
+
+    let mut buf = vec![];
+
+    loop {
+        match reader.read_event(&mut buf) {
+            Ok(event) => match event {
+                Event::Start(start) => {
+                    output
+                        .visit_open_start_element(&event_to_element(start))
+                        .expect("Open start element");
+                }
+                Event::End(_) => output
+                    .visit_close_element(&dummy_event())
+                    .expect("Close element"),
+                Event::Empty(empty) => {
+                    output
+                        .visit_open_start_element(&event_to_element(empty))
+                        .expect("Empty Open start element");
+
+                    output
+                        .visit_close_element(&dummy_event())
+                        .expect("Empty Close");
+                }
+                Event::Text(text) => output
+                    .visit_characters(&BinXmlValue::StringType(bytes_to_string(text.as_ref())))
+                    .expect("Text element"),
+                Event::Comment(_) => {}
+                Event::CData(_) => unimplemented!(),
+                Event::Decl(_) => {}
+                Event::PI(_) => unimplemented!(),
+                Event::DocType(_) => {}
+                Event::Eof => {
+                    output.visit_end_of_stream().expect("End of stream");
+                    break;
+                }
+            },
+            Err(e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
+        }
+    }
+
+    serde_json::to_string_pretty(&output.into_value().expect("Output")).expect("To serialize")
+}
+
 // For tests, we only initialize logging once.
 #[cfg(test)]
 use std::sync::Once;

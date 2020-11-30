@@ -81,12 +81,10 @@ impl BinXmlNameRef {
 }
 
 impl BinXmlName {
-    #[cfg(test)]
     pub(crate) fn from_str(s: &str) -> Self {
         BinXmlName { str: s.to_string() }
     }
 
-    #[cfg(test)]
     pub(crate) fn from_string(s: String) -> Self {
         BinXmlName { str: s }
     }
